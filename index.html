@@ -1,0 +1,1240 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>時鐘報讀挑戰賽</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <!-- html2pdf.js for PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f8fafc;
+        }
+
+        /* Seventeen Colors */
+        :root {
+            --rose-quartz: #F7CAC9;
+            --serenity: #92A8D1;
+            --rose-dark: #d69fa0;
+            --serenity-dark: #748ab5;
+        }
+
+        .bg-gradient-seventeen {
+            background: linear-gradient(to bottom, var(--serenity), var(--rose-quartz));
+        }
+
+        .text-rose-quartz { color: var(--rose-quartz); }
+        .text-serenity { color: var(--serenity); }
+        
+        .bg-rose-quartz { background-color: var(--rose-quartz); }
+        .bg-serenity { background-color: var(--serenity); }
+
+        .border-rose-quartz { border-color: var(--rose-quartz); }
+        .border-serenity { border-color: var(--serenity); }
+
+        /* Animation */
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .animate-pop {
+            animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        @keyframes pop {
+            0% { transform: scale(0.5); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* Input Controls */
+        .input-btn {
+            touch-action: manipulation;
+        }
+
+        /* Print Styles */
+        @media print {
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            body { background: white; }
+            .page-break { page-break-after: always; }
+            /* A4 Page Setup */
+            @page { size: A4; margin: 0; }
+            .a4-page {
+                width: 210mm;
+                height: 297mm;
+                padding: 15mm;
+                page-break-after: always;
+                box-sizing: border-box;
+                display: flex;
+                flex-direction: column;
+                justify-content: space-between;
+            }
+            .a4-page:last-child {
+                page-break-after: auto;
+            }
+        }
+        
+        /* Screen preview for A4 pages */
+        .a4-page {
+            width: 210mm;
+            height: 297mm;
+            padding: 15mm;
+            background: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            margin: 0 auto 20px auto;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .print-only { display: none; }
+        
+        /* Show print view when in print mode state */
+        .print-mode .print-only { display: block; }
+        .print-mode .screen-only { display: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- Constants ---
+        const COLORS = {
+            rose: '#F7CAC9',
+            roseDark: '#d69fa0',
+            serenity: '#92A8D1',
+            serenityDark: '#748ab5',
+            text: '#4a5568',
+            white: '#ffffff',
+            black: '#000000',
+            gray: '#E2E8F0'
+        };
+
+        const DIFFICULTY_LEVELS = [
+            { id: 'hour', name: 'Level 1: 整點鐘報讀', step: 60 },
+            { id: 'half', name: 'Level 2: 半點鐘報讀', step: 30 },
+            { id: 'five', name: 'Level 3: 5分報讀 (大格)', step: 5 },
+            { id: 'one', name: 'Level 4: 1分報讀 (小格)', step: 1 },
+            { id: 'range_45_59', name: 'Level 5: 警戒區 (45~59分)', step: 1 },
+            { id: 'range_45_55', name: 'Level 6: 倒數區 (45~55分)', step: 1 },
+            { id: 'range_55_59', name: 'Level 7: 極限區 (55~59分)', step: 1 },
+            { id: 'mixed', name: 'Boss: 大魔王關 (混合挑戰)', step: 'mixed' }
+        ];
+
+        const INSTRUCTION_LEVELS = [
+            { id: 'prek', name: 'A版：魔法口訣 (重點提示)' },
+            { id: 'grade2', name: 'B版：偵探守則 (完整步驟)' }
+        ];
+
+        const QUESTION_COUNTS = Array.from({length: 20}, (_, i) => i + 1);
+
+        // --- Helper Functions ---
+
+        // Text to Speech Helper
+        const speak = (text) => {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const textToSpeak = text.replace(/幾/g, '己');
+                
+                const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                utterance.lang = 'zh-TW'; 
+                utterance.rate = 0.95; 
+                utterance.pitch = 1.1; 
+                
+                const voices = window.speechSynthesis.getVoices();
+                
+                let targetVoice = voices.find(v => v.name.includes('Google') && v.lang.includes('zh-TW')) || 
+                                  voices.find(v => (v.name.includes('Hanhan') || v.name.includes('Yating')) && v.lang.includes('zh-TW')) ||
+                                  voices.find(v => v.name.includes('Mei-Jia') && v.lang.includes('zh-TW')) ||
+                                  voices.find(v => v.lang.includes('zh-TW'));
+
+                if (targetVoice) utterance.voice = targetVoice;
+                window.speechSynthesis.speak(utterance);
+            }
+        };
+
+        // SVG Arc Generator
+        function polarToCartesian(centerX, centerY, radius, angleInDegrees) {
+            var angleInRadians = (angleInDegrees - 90) * Math.PI / 180.0;
+            return {
+                x: centerX + (radius * Math.cos(angleInRadians)),
+                y: centerY + (radius * Math.sin(angleInRadians))
+            };
+        }
+
+        function describeArc(x, y, radius, startAngle, endAngle) {
+            var start = polarToCartesian(x, y, radius, endAngle);
+            var end = polarToCartesian(x, y, radius, startAngle);
+            var largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+            var d = [
+                "M", x, y,
+                "L", start.x, start.y,
+                "A", radius, radius, 0, largeArcFlag, 0, end.x, end.y,
+                "L", x, y
+            ].join(" ");
+            return d;
+        }
+
+        // Logic to generate AI feedback
+        function generateAIAnalysis(questions) {
+            const mistakes = questions.filter(q => !q.isCorrect);
+            const goals = [];
+
+            if (mistakes.length === 0) {
+                return [
+                    "🌟 完美表現：學生對目前的難度掌握度極高。",
+                    "⚡ 提升速度：可以嘗試要求更快的作答反應。",
+                    "🙈 褪除提示：建議下次挑戰關閉顏色或區間輔助。"
+                ];
+            }
+
+            let errorPatterns = {
+                nearHour: 0,
+                minute5: 0,
+                minute1: 0,
+                hour: 0
+            };
+
+            mistakes.forEach(m => {
+                const targetH = m.targetHour;
+                const targetM = m.targetMinute;
+                
+                const userH = m.userAnswerHour || 0;
+                const userM = m.userAnswerMinute || 0;
+
+                const nextHour = targetH === 12 ? 1 : targetH + 1;
+                if (targetM >= 50 && userH === nextHour) {
+                    errorPatterns.nearHour++;
+                } else if (targetH !== userH) {
+                    errorPatterns.hour++;
+                }
+
+                if (Math.abs(targetM - userM) > 0) {
+                    if (targetM % 5 === 0) errorPatterns.minute5++;
+                    else errorPatterns.minute1++;
+                }
+            });
+
+            if (errorPatterns.nearHour > 0) {
+                goals.push("🎯 **視知覺訓練**：針對「時針接近下一整點」的混淆進行特訓。");
+            }
+            if (errorPatterns.hour > errorPatterns.nearHour) {
+                goals.push("🎯 **時針區間概念**：加強時針「走過誰就是誰」的順時針順序概念。");
+            }
+            if (errorPatterns.minute5 > 0) {
+                goals.push("🎯 **倍數報讀**：加強 5 的倍數唱數練習 (5, 10, 15...)。");
+            }
+            if (errorPatterns.minute1 > 0) {
+                goals.push("🎯 **精細視覺辨識**：對於小格線的判讀有誤差，建議使用放大鏡輔助。");
+            }
+            
+            if (goals.length < 3) goals.push("💪 **自信心建立**：給予更多口頭鼓勵。");
+            if (goals.length < 3) goals.push("🧩 **混合題型練習**：持續挑戰混合難度。");
+
+            return goals.slice(0, 3);
+        }
+
+        // --- Visual Components ---
+
+        const ClockFace = ({ hour, minute, showColor, showHouse, size = 300 }) => {
+            const radius = size * 0.45; 
+            const center = size / 2;
+            const fontSize = size * 0.08;
+            
+            // Angles
+            const minuteAngle = minute * 6;
+            const hourAngle = (hour % 12) * 30 + (minute * 0.5);
+
+            // House Calculation
+            const houseStartAngle = (hour % 12) * 30; 
+            const houseEndAngle = houseStartAngle + 30;
+
+            // Dimensions
+            const numberRadius = radius * 0.65;
+            const tickStart = radius * 0.95; 
+            const hourTickEnd = radius * 0.78; 
+            const minTickEnd = radius * 0.88; 
+
+            return (
+                <div className={`relative mx-auto`} style={{ width: size, height: size }}>
+                    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+                        {/* Clock Frame */}
+                        <circle cx={center} cy={center} r={radius} fill="white" stroke="#333" strokeWidth={size*0.01} />
+                        
+                        {/* The House */}
+                        {showHouse && (
+                            <path 
+                                d={describeArc(center, center, radius, houseStartAngle, houseEndAngle)} 
+                                fill={COLORS.rose} 
+                                fillOpacity="0.4"
+                            />
+                        )}
+
+                        {/* Numbers */}
+                        {Array.from({ length: 12 }).map((_, i) => {
+                            const num = i + 1;
+                            const angle = num * 30;
+                            const x = center + numberRadius * Math.sin(angle * Math.PI / 180);
+                            const y = center - numberRadius * Math.cos(angle * Math.PI / 180);
+                            return (
+                                <text
+                                    key={num}
+                                    x={x} y={y}
+                                    textAnchor="middle"
+                                    dominantBaseline="middle"
+                                    fontSize={fontSize}
+                                    fontWeight="bold"
+                                    fill={showColor ? COLORS.roseDark : "#333"}
+                                    style={{ fontFamily: 'Arial, sans-serif' }}
+                                >
+                                    {num}
+                                </text>
+                            );
+                        })}
+
+                        {/* Ticks */}
+                        {Array.from({ length: 60 }).map((_, i) => {
+                            const isHour = i % 5 === 0;
+                            const angle = i * 6;
+                            
+                            const y1 = center - tickStart;
+                            const y2 = center - (isHour ? hourTickEnd : minTickEnd);
+
+                            return (
+                                <line
+                                    key={i}
+                                    x1={center} y1={y1}
+                                    x2={center} y2={y2}
+                                    stroke={COLORS.black} 
+                                    strokeWidth={isHour ? size*0.015 : size*0.006} 
+                                    transform={`rotate(${angle} ${center} ${center})`}
+                                />
+                            );
+                        })}
+
+                        {/* Hands */}
+                        {/* Hour Hand */}
+                        <line
+                            x1={center} y1={center}
+                            x2={center} y2={center - (radius * 0.5)}
+                            stroke={showColor ? COLORS.rose : "#333"}
+                            strokeWidth={size*0.035}
+                            strokeLinecap="round"
+                            transform={`rotate(${hourAngle} ${center} ${center})`}
+                        />
+                         {/* Minute Hand */}
+                        <line
+                            x1={center} y1={center}
+                            x2={center} y2={center - (radius * 0.85)}
+                            stroke={showColor ? COLORS.serenity : "#333"}
+                            strokeWidth={size*0.02}
+                            strokeLinecap="round"
+                            transform={`rotate(${minuteAngle} ${center} ${center})`}
+                        />
+
+                        <circle cx={center} cy={center} r={size*0.02} fill="#333" />
+                    </svg>
+                </div>
+            );
+        };
+
+        // --- Main App ---
+
+        const App = () => {
+            const [view, setView] = useState('welcome');
+            const [studentName, setStudentName] = useState('');
+            const [difficulty, setDifficulty] = useState('mixed');
+            const [instructionLevel, setInstructionLevel] = useState('grade2');
+            const [questionCount, setQuestionCount] = useState(10);
+            
+            // Game State
+            const [questions, setQuestions] = useState([]);
+            const [currentIndex, setCurrentIndex] = useState(0);
+            const [userHour, setUserHour] = useState('');
+            const [userMinute, setUserMinute] = useState('');
+            const [feedback, setFeedback] = useState(null); 
+            const [showHint, setShowHint] = useState(false);
+            const [showHourHintAnswer, setShowHourHintAnswer] = useState(false);
+            const [hintUsedForQuestion, setHintUsedForQuestion] = useState(false);
+            
+            // Toggles
+            const [showColor, setShowColor] = useState(true);
+            const [showHouse, setShowHouse] = useState(false);
+
+            // Worksheet Settings
+            const [wsCount, setWsCount] = useState(10);
+            const [wsColor, setWsColor] = useState(false);
+            const [wsHouse, setWsHouse] = useState(false);
+            const [printDiffTitle, setPrintDiffTitle] = useState('');
+            const [printDifficulty, setPrintDifficulty] = useState(''); // New state for dropdown
+
+            // Admin
+            const [passwordInput, setPasswordInput] = useState('');
+            const [showPwdModal, setShowPwdModal] = useState(false);
+            
+            // New: Custom Password State
+            const [adminPassword, setAdminPassword] = useState(() => {
+                return localStorage.getItem('seventeenClockAdminPwd') || '0000';
+            });
+            const [showChangePwdModal, setShowChangePwdModal] = useState(false);
+            const [newPassword, setNewPassword] = useState('');
+
+            const [selectedRecord, setSelectedRecord] = useState(null); 
+            const [history, setHistory] = useState(() => {
+                const saved = localStorage.getItem('seventeenClockHistory');
+                return saved ? JSON.parse(saved) : [];
+            });
+
+            useEffect(() => {
+                localStorage.setItem('seventeenClockHistory', JSON.stringify(history));
+            }, [history]);
+
+            // Ensure voices are loaded
+            useEffect(() => {
+                window.speechSynthesis.getVoices();
+            }, []);
+
+            // --- Logic ---
+
+            const getRandomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+            const generateQuestionSet = (diff, count, isForWorksheet = false) => {
+                const generatedSet = new Set();
+                const arr = [];
+                let attempts = 0;
+                const maxAttempts = count * 20;
+
+                // Determine pool size roughly to avoid infinite loops
+                let maxUniqueQuestions = 720;
+                if (diff === 'hour' || diff === 'half') maxUniqueQuestions = 12;
+                else if (diff === 'five') maxUniqueQuestions = 144;
+                
+                let effectiveCount = count;
+                if (count > maxUniqueQuestions) {
+                    effectiveCount = maxUniqueQuestions;
+                    if (isForWorksheet) alert(`提醒：${DIFFICULTY_LEVELS.find(d=>d.id===diff).name} 只有 ${maxUniqueQuestions} 種不重複的題目喔！已自動調整為 ${maxUniqueQuestions} 題。`);
+                }
+
+                while (arr.length < effectiveCount && attempts < maxAttempts) {
+                    attempts++;
+                    let h = Math.floor(Math.random() * 12) + 1;
+                    let m = 0;
+                    
+                    if (diff === 'mixed') {
+                        const rand = Math.random();
+                        if (rand < 0.3) m = Math.random() > 0.5 ? 0 : 30; 
+                        else if (rand < 0.6) m = Math.floor(Math.random() * 12) * 5; 
+                        else { 
+                            m = Math.floor(Math.random() * 60);
+                            if (Math.random() > 0.6) m = 50 + Math.floor(Math.random() * 10);
+                        }
+                    } else if (diff === 'one') {
+                        // 1分報讀 (Level 4): MUST NOT be multiples of 5
+                        // This forces the student to count small ticks
+                        do {
+                            m = Math.floor(Math.random() * 60);
+                        } while (m % 5 === 0);
+                    } else if (diff === 'five') {
+                        m = Math.floor(Math.random() * 12) * 5;
+                    } else if (diff === 'half') {
+                        m = 30;
+                    } else if (diff === 'hour') {
+                        m = 0;
+                    } else if (diff === 'range_45_59') {
+                        m = getRandomInt(45, 59);
+                    } else if (diff === 'range_45_55') {
+                        m = getRandomInt(45, 55);
+                    } else if (diff === 'range_55_59') {
+                        m = getRandomInt(55, 59);
+                    }
+
+                    const key = `${h}:${m}`;
+                    if (!generatedSet.has(key)) {
+                        generatedSet.add(key);
+                        arr.push({ 
+                            id: Date.now() + arr.length, 
+                            targetHour: h, 
+                            targetMinute: m, 
+                            userAnswer: null, 
+                            isCorrect: false,
+                            errorType: 'none',
+                            usedHint: false
+                        });
+                    }
+                }
+                return arr;
+            };
+
+            const startGame = () => {
+                if(!studentName) { alert("請寫上名字喔！"); return; }
+                setQuestions(generateQuestionSet(difficulty, questionCount));
+                setCurrentIndex(0);
+                setUserHour(''); setUserMinute('');
+                setFeedback(null);
+                setShowHint(false);
+                setHintUsedForQuestion(false);
+                setShowHourHintAnswer(false);
+                setView('practice');
+            };
+
+            const toggleHint = () => {
+                if (!showHint) setHintUsedForQuestion(true);
+                setShowHint(!showHint);
+            };
+
+            const adjustHour = (delta) => {
+                let current = parseInt(userHour) || 0;
+                let next = current + delta;
+                if (next > 12) next = 1;
+                if (next < 1) next = 12;
+                setUserHour(next.toString());
+            };
+
+            const adjustMinute = (delta) => {
+                let current = parseInt(userMinute);
+                if (isNaN(current)) current = delta > 0 ? -1 : 60; 
+                let next = current + delta;
+                if (next > 59) next = 0;
+                if (next < 0) next = 59;
+                setUserMinute(next.toString());
+            };
+
+            const submitAnswer = () => {
+                if(!userHour || userMinute === '') return;
+                
+                const q = questions[currentIndex];
+                const uH = parseInt(userHour);
+                const uM = parseInt(userMinute);
+                const isCorrect = uH === q.targetHour && uM === q.targetMinute;
+
+                let errorType = 'none';
+                if (!isCorrect) {
+                    if (uH !== q.targetHour && uM !== q.targetMinute) errorType = 'both';
+                    else if (uH !== q.targetHour) errorType = 'hour';
+                    else if (uM !== q.targetMinute) errorType = 'minute';
+                }
+
+                const newQ = [...questions];
+                newQ[currentIndex] = { 
+                    ...q, 
+                    userAnswer: `${uH}:${uM}`, 
+                    userAnswerHour: uH,
+                    userAnswerMinute: uM,
+                    isCorrect,
+                    errorType,
+                    usedHint: hintUsedForQuestion
+                };
+                setQuestions(newQ);
+
+                if(isCorrect) {
+                    setFeedback('correct');
+                    speak("好棒喔！答對了！");
+                } else {
+                    setFeedback('wrong');
+                    let errorPart = "答案";
+                    if (uM !== q.targetMinute && uH === q.targetHour) errorPart = "分針的地方";
+                    else if (uH !== q.targetHour && uM === q.targetMinute) errorPart = "時針的地方";
+                    else if (uH !== q.targetHour && uM !== q.targetMinute) errorPart = "時針和分針";
+
+                    speak(`${errorPart}需要調整，答錯沒關係，我們看下一題！`);
+                }
+            };
+
+            const nextQuestion = () => {
+                 if(currentIndex < questions.length - 1) {
+                    setCurrentIndex(curr => curr + 1);
+                    setUserHour(''); setUserMinute('');
+                    setFeedback(null);
+                    setShowHint(false);
+                    setHintUsedForQuestion(false);
+                    setShowHourHintAnswer(false);
+                } else {
+                    finishGame(questions);
+                }
+            };
+
+            const finishGame = (finalQs) => {
+                const analysis = generateAIAnalysis(finalQs);
+                const record = {
+                    id: Date.now(),
+                    date: new Date().toLocaleString(),
+                    studentName,
+                    difficulty,
+                    score: finalQs.filter(q => q.isCorrect).length,
+                    total: finalQs.length,
+                    questions: finalQs,
+                    analysis
+                };
+                setHistory([record, ...history]);
+                setView('result');
+            };
+
+            const handleAdminLogin = () => {
+                // Modified to use stored password
+                if(passwordInput === adminPassword) {
+                    setShowPwdModal(false);
+                    setPasswordInput('');
+                    setView('dashboard');
+                } else {
+                    alert("密碼錯誤！");
+                }
+            };
+
+            const handleSaveNewPassword = () => {
+                if(!newPassword.trim()) {
+                    alert("密碼不能為空！");
+                    return;
+                }
+                if(newPassword.length < 4) {
+                    alert("為了安全，密碼至少請設定4位數喔！");
+                    return;
+                }
+                setAdminPassword(newPassword);
+                localStorage.setItem('seventeenClockAdminPwd', newPassword);
+                setShowChangePwdModal(false);
+                setNewPassword('');
+                alert("密碼已更新！下次請用新密碼登入。");
+            };
+
+            const handleResetPassword = () => {
+                if(confirm("確定要恢復預設密碼 (0000) 嗎？")) {
+                    setAdminPassword('0000');
+                    localStorage.setItem('seventeenClockAdminPwd', '0000');
+                    setShowChangePwdModal(false);
+                    setNewPassword('');
+                    alert("已恢復預設密碼！");
+                }
+            };
+
+            // PDF Export Handler
+            const handleExportPDF = () => {
+                const element = document.getElementById('print-container'); 
+                const opt = {
+                    margin: 0,
+                    filename: `時鐘報讀學習單_${printDiffTitle}.pdf`,
+                    image: { type: 'jpeg', quality: 0.98 },
+                    html2canvas: { scale: 2, useCORS: true },
+                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                    pagebreak: { mode: ['css', 'legacy'] } 
+                };
+                
+                const controls = document.querySelectorAll('.no-print-export');
+                controls.forEach(el => el.style.display = 'none');
+
+                html2pdf().set(opt).from(element).save().then(() => {
+                    controls.forEach(el => el.style.display = '');
+                });
+            };
+
+            // --- Views ---
+
+            const renderWelcome = () => (
+                <div className="min-h-screen bg-gradient-seventeen flex flex-col items-center justify-center p-4 screen-only">
+                    {/* ... Same Welcome content ... */}
+                    <div className="bg-white/90 backdrop-blur-sm p-8 rounded-3xl shadow-2xl w-full max-w-md border-4 border-white animate-fade-in">
+                        <div className="text-center mb-8">
+                            <h1 className="text-3xl font-bold text-slate-700 mb-2 tracking-wide">
+                                <i className="ph-fill ph-clock-countdown text-rose-quartz text-4xl align-middle mr-2"></i>
+                                時鐘報讀挑戰賽
+                            </h1>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-slate-500 font-bold mb-1">你的名字</label>
+                                <input 
+                                    type="text" 
+                                    className="w-full p-3 border-2 border-slate-200 rounded-xl text-lg text-center focus:border-rose-quartz outline-none transition"
+                                    placeholder="請輸入名字..."
+                                    value={studentName}
+                                    onChange={e => setStudentName(e.target.value)}
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-slate-500 font-bold mb-1">挑戰關卡</label>
+                                <select 
+                                    className="w-full p-3 border-2 border-slate-200 rounded-xl bg-white"
+                                    value={difficulty}
+                                    onChange={e => setDifficulty(e.target.value)}
+                                >
+                                    {DIFFICULTY_LEVELS.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                                </select>
+                            </div>
+
+                            <div className="flex gap-4">
+                                <div className="w-1/3">
+                                    <label className="block text-slate-500 font-bold mb-1">題數</label>
+                                    <select 
+                                        className="w-full p-3 border-2 border-slate-200 rounded-xl bg-white text-center"
+                                        value={questionCount}
+                                        onChange={e => setQuestionCount(Number(e.target.value))}
+                                    >
+                                        {QUESTION_COUNTS.map(c => <option key={c} value={c}>{c} 題</option>)}
+                                    </select>
+                                </div>
+                                <div className="w-2/3">
+                                    <label className="block text-slate-500 font-bold mb-1">SOP 版本</label>
+                                    <select 
+                                        className="w-full p-3 border-2 border-slate-200 rounded-xl bg-white"
+                                        value={instructionLevel}
+                                        onChange={e => setInstructionLevel(e.target.value)}
+                                    >
+                                        {INSTRUCTION_LEVELS.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <button 
+                                onClick={startGame}
+                                className="w-full bg-rose-quartz hover:bg-rose-dark text-white font-bold py-4 rounded-full text-xl shadow-lg transform transition active:scale-95 mt-4"
+                            >
+                                開始挑戰 GO!
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <button 
+                        onClick={() => setShowPwdModal(true)}
+                        className="absolute bottom-6 right-6 text-white/80 hover:text-white flex items-center gap-1 font-bold"
+                    >
+                        <i className="ph-bold ph-key"></i> 教師後台
+                    </button>
+                </div>
+            );
+
+            // Practice, Result views (Using same logic as before, just placeholder for conciseness)
+            const renderPractice = () => {
+                const q = questions[currentIndex];
+                const progress = ((currentIndex) / questions.length) * 100;
+                const nextHour = q.targetHour === 12 ? 1 : q.targetHour + 1;
+                // ... SOP logic ...
+                // Re-inserted full logic for stability
+                let step1LabelDisplay, step1Full, step1Blank;
+                let step2Display, step2Speak; 
+                let step1SpeakQuestion; 
+
+                if (instructionLevel === 'prek') {
+                    step1LabelDisplay = (<span>1. 看<span className="text-rose-quartz font-bold mx-1">粉紅色</span>短針(時針)：</span>);
+                    if (q.targetMinute === 0) {
+                        step1Full = `短針指著 ${q.targetHour}，是 ${q.targetHour} 的家，是 ${q.targetHour} 時`;
+                        step1Blank = `短針指著 ___，是 ___ 的家，是 ___ 時`;
+                        step1SpeakQuestion = `看粉紅色短針。短針指著己？是誰的家？是己時？`;
+                    } else {
+                        step1Full = `短針在 ${q.targetHour} 和 ${nextHour} 之間，是 ${q.targetHour} 的家，是 ${q.targetHour} 時`;
+                        step1Blank = `短針在 ___ 和 ___ 之間，是 ___ 的家，是 ___ 時`;
+                        step1SpeakQuestion = `看粉紅色短針。短針在己和己之間？是誰的家？是己時？`;
+                    }
+                    step2Display = (<span>2. 再看分針：看<span className="text-serenity font-bold mx-1">藍色</span>長針指哪裡，先數大格(5個一數)再數小格(1個一數)</span>);
+                    step2Speak = "再看分針：看藍色長針指哪裡，先數大格(5個一數)再數小格(1個一數)";
+                } else {
+                    step1LabelDisplay = (<span>1. <span className="text-rose-quartz font-bold">看時針</span>：</span>);
+                    if (q.targetMinute === 0) {
+                        step1Full = `短針指著 ${q.targetHour}，是 ${q.targetHour} 的家，是 ${q.targetHour} 時`;
+                        step1Blank = `短針指著 ___，是 ___ 的家，是 ___ 時`;
+                        step1SpeakQuestion = `看時針。短針指著己？是誰的家？是己時？`;
+                    } else {
+                        step1Full = `短針在 ${q.targetHour} 和 ${nextHour} 之間，是 ${q.targetHour} 的家，是 ${q.targetHour} 時`;
+                        step1Blank = `短針在 ___ 和 ___ 之間，是 ___ 的家，是 ___ 時`;
+                        step1SpeakQuestion = `看時針。短針在己和己之間？是誰的家？是己時？`;
+                    }
+                    step2Display = (<span>2. <span className="text-serenity font-bold">再看分針</span>：先數大格(5個一數)再數小格(1個一數)</span>);
+                    step2Speak = "再看分針：先數大格(5個一數)再數小格(1個一數)";
+                }
+                const isAnswered = feedback !== null;
+
+                return (
+                    <div className="min-h-screen bg-slate-50 flex flex-col max-w-2xl mx-auto shadow-2xl min-h-screen screen-only">
+                        <div className="p-4 flex items-center justify-between bg-white shadow-sm z-10">
+                            <button onClick={() => setView('welcome')} className="text-slate-400 hover:text-rose-quartz"><i className="ph-bold ph-house text-2xl"></i></button>
+                            <div className="flex-1 mx-6">
+                                <div className="flex justify-between text-xs font-bold text-slate-400 mb-1"><span>LEVEL: {DIFFICULTY_LEVELS.find(d=>d.id===difficulty).name.split(':')[0]}</span><span>{currentIndex + 1}/{questions.length}</span></div>
+                                <div className="h-3 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-gradient-seventeen transition-all duration-500" style={{width: `${progress}%`}}></div></div>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => setShowColor(!showColor)} className={`p-2 rounded-lg ${showColor ? 'bg-rose-100 text-rose-500' : 'bg-gray-100 text-gray-400'}`}><i className="ph-fill ph-palette"></i></button>
+                                <button onClick={() => setShowHouse(!showHouse)} className={`p-2 rounded-lg ${showHouse ? 'bg-blue-100 text-blue-500' : 'bg-gray-100 text-gray-400'}`}><i className="ph-fill ph-clock"></i></button>
+                            </div>
+                        </div>
+                        <div className="flex-1 flex flex-col items-center justify-center p-4 overflow-y-auto">
+                            <div className="bg-white p-6 rounded-3xl shadow-lg mb-6 transform transition hover:scale-105 duration-300">
+                                <ClockFace hour={q.targetHour} minute={q.targetMinute} showColor={showColor} showHouse={showHouse} />
+                            </div>
+                            <div className="w-full max-w-md mb-6">
+                                <button onClick={toggleHint} className="flex items-center gap-2 text-yellow-500 font-bold bg-yellow-50 px-4 py-2 rounded-full mx-auto mb-2 hover:bg-yellow-100 transition"><i className="ph-fill ph-lightbulb"></i> {showHint ? '隱藏提示' : '需要提示嗎？'}</button>
+                                {showHint && (
+                                    <div className="bg-white border-2 border-dashed border-serenity rounded-xl p-4 animate-fade-in">
+                                        <h4 className="font-bold text-serenity mb-2 text-center flex items-center justify-center gap-2">💡 報讀 SOP</h4>
+                                        <ul className="space-y-4 text-base">
+                                            <li className="flex items-start text-slate-600">
+                                                <button onClick={() => speak(showHourHintAnswer ? step1Full : step1SpeakQuestion)} className="text-rose-quartz hover:text-rose-500 mr-2 mt-1 p-1 shrink-0"><i className="ph-fill ph-speaker-high text-2xl"></i></button>
+                                                <div className="flex-1"><div><span className="font-bold mr-1">{step1LabelDisplay}</span></div><div onClick={() => setShowHourHintAnswer(true)} className={`block mt-1 p-2 rounded border-2 transition cursor-pointer select-none text-center ${showHourHintAnswer ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-slate-50 text-slate-400 border-dashed border-slate-300 hover:bg-slate-100'}`}>{showHourHintAnswer ? step1Full : (<span>{step1Blank}<span className="block text-xs mt-1 text-slate-400 font-normal">(點擊顯示答案)</span></span>)}</div></div>
+                                            </li>
+                                            <li className="flex items-center text-slate-600">
+                                                <button onClick={() => speak(step2Speak)} className="text-serenity hover:text-blue-500 mr-2 p-1 shrink-0"><i className="ph-fill ph-speaker-high text-2xl"></i></button>
+                                                <div>{step2Display}</div>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-6 mb-8">
+                                <div className="flex flex-col items-center gap-2">
+                                    <button onClick={() => adjustHour(1)} className="input-btn w-16 h-12 bg-rose-quartz text-white rounded-xl shadow-md font-bold" disabled={isAnswered}><i className="ph-bold ph-caret-up"></i></button>
+                                    <input type="number" value={userHour} onChange={e => setUserHour(e.target.value)} placeholder="時" disabled={isAnswered} className={`w-24 h-24 text-center text-4xl font-bold rounded-2xl border-4 outline-none ${showColor ? 'border-rose-quartz text-rose-quartz' : 'border-slate-300'}`} />
+                                    <button onClick={() => adjustHour(-1)} className="input-btn w-16 h-12 bg-rose-quartz text-white rounded-xl shadow-md font-bold" disabled={isAnswered}><i className="ph-bold ph-caret-down"></i></button>
+                                </div>
+                                <span className="text-4xl font-bold text-slate-300">:</span>
+                                <div className="flex flex-col items-center gap-2">
+                                    <button onClick={() => adjustMinute(1)} className="input-btn w-16 h-12 bg-serenity text-white rounded-xl shadow-md font-bold" disabled={isAnswered}><i className="ph-bold ph-caret-up"></i></button>
+                                    <input type="number" value={userMinute} onChange={e => setUserMinute(e.target.value)} placeholder="分" disabled={isAnswered} className={`w-24 h-24 text-center text-4xl font-bold rounded-2xl border-4 outline-none ${showColor ? 'border-serenity text-serenity' : 'border-slate-300'}`} />
+                                    <button onClick={() => adjustMinute(-1)} className="input-btn w-16 h-12 bg-serenity text-white rounded-xl shadow-md font-bold" disabled={isAnswered}><i className="ph-bold ph-caret-down"></i></button>
+                                </div>
+                            </div>
+                            {feedback === 'correct' ? (
+                                <div className="flex flex-col items-center animate-pop">
+                                    <div className="text-green-500 text-3xl font-bold mb-4 flex items-center gap-2"><i className="ph-fill ph-check-circle"></i> 好棒喔！答對了！</div>
+                                    <button onClick={nextQuestion} className="bg-green-500 hover:bg-green-600 text-white text-xl font-bold py-3 px-12 rounded-full shadow-lg">下一題 <i className="ph-bold ph-arrow-right"></i></button>
+                                </div>
+                            ) : feedback === 'wrong' ? (
+                                <div className="flex flex-col items-center animate-shake">
+                                    <div className="text-rose-500 text-xl font-bold mb-4">哎呀！繼續加油！</div>
+                                    <button onClick={nextQuestion} className="bg-rose-quartz hover:bg-rose-dark text-white px-12 py-3 rounded-full font-bold text-xl shadow-lg"><i className="ph-bold ph-arrow-right"></i> 下一題</button>
+                                </div>
+                            ) : (
+                                <button onClick={submitAnswer} className="bg-gradient-seventeen text-white text-2xl font-bold py-4 px-16 rounded-full shadow-lg transform transition active:scale-95 hover:shadow-xl">送出答案</button>
+                            )}
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderResult = () => {
+                const latest = history[0];
+                return (
+                    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 screen-only">
+                        <div className="max-w-2xl w-full text-center">
+                            <i className="ph-duotone ph-trophy text-8xl text-yellow-400 mb-4"></i>
+                            <h2 className="text-4xl font-bold text-slate-800 mb-2">挑戰完成！</h2>
+                            <p className="text-xl text-slate-500 mb-8">做得好，{latest.studentName}！</p>
+                            <div className="bg-slate-50 rounded-3xl p-8 mb-8 border-4 border-serenity">
+                                <div className="text-6xl font-bold text-rose-quartz mb-2">{latest.score} <span className="text-2xl text-slate-400">/ {latest.total}</span></div>
+                                <div className="h-1 w-full bg-slate-200 my-6"></div>
+                                <h3 className="text-left font-bold text-slate-700 mb-4"><i className="ph-fill ph-robot text-serenity"></i> AI 學習處方籤</h3>
+                                <div className="space-y-4 text-left">
+                                    {latest.analysis.map((goal, idx) => <div key={idx} className="bg-white p-4 rounded-xl shadow-sm border-l-4 border-rose-quartz text-slate-600" dangerouslySetInnerHTML={{__html: goal.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}}></div>)}
+                                </div>
+                            </div>
+                            <div className="flex gap-4 justify-center">
+                                <button onClick={() => setView('welcome')} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 px-8 rounded-xl text-lg">回到首頁</button>
+                                <button onClick={() => setShowPwdModal(true)} className="bg-serenity hover:bg-serenity-dark text-white font-bold py-3 px-8 rounded-xl text-lg">教師後台</button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderDashboard = () => {
+                const exportTxt = () => {
+                    const content = history.map(h => {
+                        const analysisText = h.analysis.map((a, i) => `${i + 1}. ${a}`).join('\n');
+                        const questionsText = h.questions.map((q, i) => {
+                            const result = q.isCorrect ? '正確' : '錯誤';
+                            const errorType = q.isCorrect ? '-' : 
+                                              q.errorType === 'both' ? '時針與分針皆錯' :
+                                              q.errorType === 'hour' ? '時針判讀錯誤' :
+                                              q.errorType === 'minute' ? '分針判讀錯誤' : '錯誤';
+                            const hint = q.usedHint ? '有' : '無';
+                            const targetTime = `${q.targetHour}:${q.targetMinute < 10 ? '0' + q.targetMinute : q.targetMinute}`;
+                            return `題號: ${i + 1} | 題目: ${targetTime} | 回答: ${q.userAnswer || '-'} | 結果: ${result} | 錯誤分析: ${errorType} | 提示: ${hint}`;
+                        }).join('\n');
+
+                        return `時間: ${h.date}
+學生: ${h.studentName}
+難度: ${DIFFICULTY_LEVELS.find(d => d.id === h.difficulty)?.name || h.difficulty}
+分數: ${h.score}/${h.total || 10}
+AI建議:
+${analysisText}
+-------------------
+詳細作答紀錄:
+${questionsText}
+==================================================
+`;
+                    }).join('\n');
+
+                    const blob = new Blob([content], {type: "text/plain;charset=utf-8"});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `時鐘挑戰紀錄_${new Date().toISOString().slice(0,10)}.txt`;
+                    a.click();
+                };
+
+                return (
+                    <div className="min-h-screen bg-slate-100 p-8 no-print">
+                        <div className="max-w-6xl mx-auto">
+                            <div className="flex justify-between items-center mb-8">
+                                <h1 className="text-3xl font-bold text-slate-800">
+                                    <i className="ph-fill ph-chalkboard-teacher text-serenity mr-2"></i> 家長/教師後台
+                                </h1>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setShowChangePwdModal(true)} className="bg-white text-serenity px-4 py-2 rounded-lg shadow font-bold border border-serenity hover:bg-blue-50 transition">
+                                        <i className="ph-bold ph-lock-key"></i> 修改密碼
+                                    </button>
+                                    <button onClick={() => setView('welcome')} className="bg-white text-slate-500 px-4 py-2 rounded-lg shadow font-bold border border-slate-200 hover:bg-slate-50 transition">
+                                        <i className="ph-bold ph-sign-out"></i> 登出
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                {/* Left: History */}
+                                <div className="lg:col-span-2 bg-white rounded-2xl shadow-lg p-6">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <h2 className="text-xl font-bold text-slate-700">學生作答紀錄</h2>
+                                        <button onClick={exportTxt} className="bg-rose-quartz text-white px-4 py-2 rounded-lg hover:bg-rose-dark font-bold text-sm">
+                                            <i className="ph-bold ph-download-simple"></i> 匯出 TXT
+                                        </button>
+                                    </div>
+                                    <div className="overflow-auto max-h-[600px]">
+                                        <table className="w-full text-left">
+                                            <thead className="bg-slate-50 text-slate-500 text-sm sticky top-0">
+                                                <tr>
+                                                    <th className="p-3">時間</th>
+                                                    <th className="p-3">姓名</th>
+                                                    <th className="p-3">得分</th>
+                                                    <th className="p-3">操作</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {history.map(h => (
+                                                    <tr key={h.id} className="hover:bg-slate-50">
+                                                        <td className="p-3 text-sm text-slate-500">{h.date.split(' ')[0]}</td>
+                                                        <td className="p-3 font-bold text-slate-700">{h.studentName}</td>
+                                                        <td className="p-3">
+                                                            <span className={`px-2 py-1 rounded text-xs font-bold ${h.score >= (h.total * 0.8) ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                                                                {h.score}/{h.total || 10}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-3">
+                                                            <button 
+                                                                onClick={() => setSelectedRecord(h)}
+                                                                className="text-serenity hover:text-serenity-dark font-bold text-sm bg-blue-50 px-3 py-1 rounded border border-blue-200"
+                                                            >
+                                                                🔍 詳細
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                {/* Right: Worksheet Generator */}
+                                <div className="bg-white rounded-2xl shadow-lg p-6">
+                                    <h2 className="text-xl font-bold text-slate-700 mb-4">
+                                        <i className="ph-duotone ph-printer text-serenity mr-2"></i> 學習單產生器
+                                    </h2>
+                                    <div className="space-y-4">
+                                        <p className="text-sm text-slate-500">選擇難度與設定，產生隨機題目的紙本學習單。</p>
+                                        
+                                        <div>
+                                            <label className="block text-slate-500 font-bold mb-1 text-sm">關卡難度 <span className="text-rose-500">*</span></label>
+                                            <select 
+                                                id="printDiff" 
+                                                className="w-full p-2 border rounded-lg bg-slate-50"
+                                                value={printDifficulty}
+                                                onChange={(e) => setPrintDifficulty(e.target.value)}
+                                            >
+                                                <option value="" disabled>請選擇難度</option>
+                                                {DIFFICULTY_LEVELS.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-slate-500 font-bold mb-1 text-sm">出題數量 (1~24)</label>
+                                            <input 
+                                                type="number" 
+                                                min="1" 
+                                                max="24" 
+                                                value={wsCount}
+                                                onChange={e => {
+                                                    let val = parseInt(e.target.value);
+                                                    if(val < 1) val = 1;
+                                                    if(val > 24) val = 24;
+                                                    setWsCount(val);
+                                                }}
+                                                className="w-full p-2 border rounded-lg bg-slate-50"
+                                            />
+                                            <p className="text-xs text-rose-500 mt-1">* 建議以6的倍數出題，上限24題</p>
+                                        </div>
+
+                                        <div className="flex flex-col gap-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                            <span className="text-sm font-bold text-slate-500">視覺提示設定：</span>
+                                            <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-rose-quartz">
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={wsColor} 
+                                                    onChange={e => setWsColor(e.target.checked)}
+                                                    className="rounded border-gray-300 text-rose-quartz focus:ring-rose-quartz"
+                                                />
+                                                開啟調色盤 (顏色指針)
+                                            </label>
+                                            <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer hover:text-rose-quartz">
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={wsHouse} 
+                                                    onChange={e => setWsHouse(e.target.checked)}
+                                                    className="rounded border-gray-300 text-rose-quartz focus:ring-rose-quartz"
+                                                />
+                                                開啟時鐘的家 (區間提示)
+                                            </label>
+                                        </div>
+
+                                        <button 
+                                            onClick={() => {
+                                                if (!printDifficulty) {
+                                                    alert("請先選擇關卡難度喔！");
+                                                    return;
+                                                }
+                                                const diffObj = DIFFICULTY_LEVELS.find(l => l.id === printDifficulty);
+                                                setPrintDiffTitle(diffObj ? diffObj.name.split(':')[1].trim() : '混合練習');
+                                                setQuestions(generateQuestionSet(printDifficulty, wsCount, true));
+                                                setView('print');
+                                            }}
+                                            className={`w-full font-bold py-3 rounded-xl transition mt-2 text-white
+                                                ${printDifficulty ? 'bg-serenity hover:bg-serenity-dark' : 'bg-slate-300 cursor-not-allowed'}`}
+                                        >
+                                            產生並預覽
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Detail Modal */}
+                        {selectedRecord && (
+                            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                                <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-4xl max-h-[80vh] overflow-auto m-4">
+                                    <div className="flex justify-between items-center mb-6 pb-4 border-b">
+                                        <h3 className="text-2xl font-bold text-slate-700">
+                                            📋 {selectedRecord.studentName} 的作答詳情
+                                        </h3>
+                                        <button onClick={() => setSelectedRecord(null)} className="text-slate-400 hover:text-slate-600 text-2xl">
+                                            <i className="ph-bold ph-x"></i>
+                                        </button>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4 mb-6 bg-slate-50 p-4 rounded-xl">
+                                        <div><span className="text-slate-500">日期：</span>{selectedRecord.date}</div>
+                                        <div><span className="text-slate-500">難度：</span>{DIFFICULTY_LEVELS.find(d => d.id === selectedRecord.difficulty)?.name || selectedRecord.difficulty}</div>
+                                        <div><span className="text-slate-500">得分：</span>{selectedRecord.score}/{selectedRecord.total}</div>
+                                        <div className="col-span-2 mt-2">
+                                            <span className="text-slate-500 block mb-1">AI建議：</span>
+                                            <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1">
+                                                {selectedRecord.analysis.map((goal, idx) => (
+                                                    <li key={idx} dangerouslySetInnerHTML={{__html: goal.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}}></li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    </div>
+                                    <table className="w-full text-left border-collapse">
+                                        <thead className="bg-slate-100 text-slate-600 font-bold">
+                                            <tr>
+                                                <th className="p-3 border-b">題號</th>
+                                                <th className="p-3 border-b">題目</th>
+                                                <th className="p-3 border-b">回答</th>
+                                                <th className="p-3 border-b">結果</th>
+                                                <th className="p-3 border-b">錯誤分析</th>
+                                                <th className="p-3 border-b">提示</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {selectedRecord.questions.map((q, i) => (
+                                                <tr key={i} className="border-b hover:bg-slate-50">
+                                                    <td className="p-3 text-slate-500">{i + 1}</td>
+                                                    <td className="p-3 font-mono font-bold text-lg">{q.targetHour}:{q.targetMinute < 10 ? '0' + q.targetMinute : q.targetMinute}</td>
+                                                    <td className="p-3 font-mono text-lg text-slate-600">
+                                                        {q.userAnswer || '-'}
+                                                    </td>
+                                                    <td className="p-3">
+                                                        {q.isCorrect 
+                                                            ? <span className="text-green-500 font-bold bg-green-50 px-2 py-1 rounded">✅ 正確</span> 
+                                                            : <span className="text-red-500 font-bold bg-red-50 px-2 py-1 rounded">❌ 錯誤</span>}
+                                                    </td>
+                                                    <td className="p-3 text-sm">
+                                                        {q.isCorrect ? '-' : 
+                                                            q.errorType === 'both' ? <span className="text-red-600">時針與分針皆錯</span> :
+                                                            q.errorType === 'hour' ? <span className="text-rose-500">時針判讀錯誤</span> :
+                                                            q.errorType === 'minute' ? <span className="text-blue-500">分針判讀錯誤</span> : '-'}
+                                                    </td>
+                                                    <td className="p-3 text-center">
+                                                        {q.usedHint 
+                                                            ? <i className="ph-fill ph-lightbulb text-yellow-400 text-xl" title="有使用提示"></i> 
+                                                            : <span className="text-slate-300">-</span>}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            const renderPrint = () => {
+                // Paginate questions into chunks of 6
+                const chunks = [];
+                for (let i = 0; i < questions.length; i += 6) {
+                    chunks.push(questions.slice(i, i + 6));
+                }
+
+                return (
+                    <div className="bg-gray-100 min-h-screen p-8 print-mode">
+                        <div id="print-container">
+                            {chunks.map((chunk, pageIndex) => (
+                                <div key={pageIndex} className="a4-page bg-white mx-auto relative flex flex-col justify-between">
+                                    {/* Content Group (Header + Grid) */}
+                                    <div>
+                                        <div className="text-center mb-6 border-b-2 border-slate-800 pb-2">
+                                            <h1 className="text-2xl font-bold">時鐘報讀學習單_{printDiffTitle}</h1>
+                                            <div className="flex justify-between mt-2 text-md px-4">
+                                                <span>班級：__________</span>
+                                                <span>姓名：__________</span>
+                                                <span>日期：__________</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+                                            {chunk.map((q, idx) => (
+                                                <div key={q.id} className="flex flex-col items-center justify-start pt-2 break-inside-avoid">
+                                                    <div className="mb-2 relative">
+                                                        <ClockFace hour={q.targetHour} minute={q.targetMinute} showColor={wsColor} showHouse={wsHouse} size={200} />
+                                                    </div>
+                                                    
+                                                    <div className="flex items-end gap-2 mt-1">
+                                                        <div className={`w-12 h-12 border-2 rounded-lg ${wsColor ? 'border-rose-quartz' : 'border-slate-400'} flex items-center justify-center`}>
+                                                            <span className="text-transparent">00</span>
+                                                        </div>
+                                                        <span className={`text-xl font-bold mb-1 ${wsColor ? 'text-rose-quartz' : 'text-slate-600'}`}>時</span>
+                                                        
+                                                        <div className={`w-12 h-12 border-2 rounded-lg ${wsColor ? 'border-serenity' : 'border-slate-400'} flex items-center justify-center`}>
+                                                            <span className="text-transparent">00</span>
+                                                        </div>
+                                                        <span className={`text-xl font-bold mb-1 ${wsColor ? 'text-serenity' : 'text-slate-600'}`}>分</span>
+                                                    </div>
+
+                                                    <span className="text-xs text-slate-400 mt-1">第 {(pageIndex * 6) + idx + 1} 題</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Footer - Page Number */}
+                                    <div className="text-center w-full mt-4 text-slate-500 text-sm">
+                                        - {pageIndex + 1} -
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="fixed top-4 right-4 flex gap-2 no-print no-print-export z-50">
+                            <button onClick={handleExportPDF} className="bg-rose-quartz hover:bg-rose-dark text-white px-4 py-2 rounded font-bold shadow-lg flex items-center gap-2">
+                                <i className="ph-bold ph-file-pdf"></i> 匯出 PDF
+                            </button>
+                            <button onClick={() => setView('dashboard')} className="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded font-bold shadow-lg">
+                                返回後台
+                            </button>
+                        </div>
+                    </div>
+                );
+            };
+
+            // --- Password Modal ---
+            const renderPwdModal = () => (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in screen-only">
+                    {/* ... Same modal content ... */}
+                    <div className="bg-white p-6 rounded-2xl w-80 shadow-2xl">
+                        <h3 className="font-bold text-lg mb-4 text-center">🔐 後台驗證</h3>
+                        <input type="password" className="w-full p-2 border-2 border-slate-200 rounded-lg mb-4 text-center tracking-widest" placeholder="請輸入密碼" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} />
+                        <div className="flex gap-2"><button onClick={() => setShowPwdModal(false)} className="flex-1 bg-slate-200 text-slate-600 py-2 rounded-lg font-bold">取消</button><button onClick={handleAdminLogin} className="flex-1 bg-serenity text-white py-2 rounded-lg font-bold">確認</button></div>
+                    </div>
+                </div>
+            );
+
+            // --- Change Password Modal ---
+            const renderChangePwdModal = () => (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in screen-only">
+                    <div className="bg-white p-6 rounded-2xl w-80 shadow-2xl">
+                        <h3 className="font-bold text-lg mb-4 text-center text-slate-700">🔐 修改後台密碼</h3>
+                        <div className="mb-4 text-center">
+                            <p className="text-sm text-slate-400 mb-1">目前使用的密碼</p>
+                            <p className="font-mono text-xl font-bold text-serenity tracking-widest">{adminPassword}</p>
+                        </div>
+                        <input 
+                            type="text" 
+                            className="w-full p-2 border-2 border-slate-200 rounded-lg mb-4 text-center tracking-widest font-bold text-slate-700" 
+                            placeholder="輸入新密碼" 
+                            value={newPassword} 
+                            onChange={e => setNewPassword(e.target.value)} 
+                        />
+                        <div className="flex gap-2 mb-3">
+                            <button onClick={() => { setShowChangePwdModal(false); setNewPassword(''); }} className="flex-1 bg-slate-200 text-slate-600 py-2 rounded-lg font-bold">取消</button>
+                            <button onClick={handleSaveNewPassword} className="flex-1 bg-rose-quartz hover:bg-rose-dark text-white py-2 rounded-lg font-bold">儲存</button>
+                        </div>
+                        <button 
+                            onClick={handleResetPassword} 
+                            className="w-full border-2 border-dashed border-slate-300 text-slate-400 py-2 rounded-lg font-bold text-sm hover:bg-slate-50 hover:text-slate-600 transition"
+                        >
+                            <i className="ph-bold ph-arrow-counter-clockwise"></i> 恢復預設密碼 (0000)
+                        </button>
+                    </div>
+                </div>
+            );
+
+            // --- Render Router ---
+            return (
+                <div>
+                    {showPwdModal && renderPwdModal()}
+                    {showChangePwdModal && renderChangePwdModal()}
+                    {view === 'welcome' && renderWelcome()}
+                    {view === 'practice' && renderPractice()}
+                    {view === 'result' && renderResult()}
+                    {view === 'dashboard' && renderDashboard()}
+                    {view === 'print' && renderPrint()}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
